@@ -19,7 +19,7 @@ db.on('connected', () => {
     console.log('connected to mongoDB');
 });
 
-db.on('error', () => {
+db.on('error', (error) => {
     console.log('mongoDB connection error:', error);
 });
 
@@ -38,7 +38,7 @@ const storage = multer.diskStorage({
         cb (null, 'uploads/');
     },
     filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '' + Math.round(Math.random() * 1e9);
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
         cb (null, uniqueSuffix + path.extname(file.originalname));
     },
 });
@@ -52,7 +52,7 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
         const { title } = req.body;
         const { filename } = req.file;
 
-        const video = new video({ title, filename });
+        const video = new Video({ title, filename });
         await video.save();
 
         res.status(201).json({ message: 'video uploaded successfully' });
