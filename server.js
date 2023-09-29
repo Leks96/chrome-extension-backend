@@ -50,7 +50,7 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
     try {
         //create a new video doc in mongoDB
         const { title } = req.body;
-        const { filename } = req.file.filename;
+        const { filename } = req.file;
 
         const video = new video({ title, filename });
         await video.save();
