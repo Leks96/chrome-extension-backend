@@ -3,10 +3,14 @@ require('dotenv').config();
 const express = require ('express');
 const mongoose = require ('mongoose');
 const multer = require ('multer');
+const cors = require ('cors')
 const cloudinary = require ('cloudinary').v2
 
 const app = express();
 port = process.env.PORT || 3050;
+
+app.use(express.json());
+app.use(cors());
           
 cloudinary.config({ 
   cloud_name: 'dglpy94yq', 
