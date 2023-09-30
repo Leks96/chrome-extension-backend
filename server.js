@@ -2,21 +2,15 @@ require('dotenv').config();
 
 const express = require ('express');
 const mongoose = require ('mongoose');
-const multer = require ('multer');
-const cors = require ('cors')
-const cloudinary = require ('cloudinary').v2
+const multer = require('multer');
+const cors = require ('cors');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 port = process.env.PORT || 3050;
 
 app.use(express.json());
 app.use(cors());
-          
-cloudinary.config({ 
-  cloud_name: 'dglpy94yq', 
-  api_key: '349563784769639', 
-  api_secret: 'digX16WEKTBHwdeC4X0BNflG7gQ' 
-});
 
 mongoose.connect(process.env.MONGODB_URI, {
     useNewUrlParser: true,
@@ -35,53 +29,86 @@ db.on('error', (error) => {
 //the video schema
 const videoSchema = new mongoose.Schema({
     title: String,
-    filename: String,
+    videoData: Buffer,
 });
+
+//setup multer for video uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 100 * 1024 * 1024, //limiting the filesize to 10mb
+    }
+})
+
+//unique generator function
+function generateUniqueId() {
+    return uuidv4();
+}
+
+//data storage for ongoing recordings
+const recordings = {};
 
 const Video = mongoose.model('Video', videoSchema);
 
-//setting up multer for video file uploads
-const storage = multer.memoryStorage();
-const upload = multer({ 
-    storage: storage,
-}); 
+//start recording endpoint
+app.post('/start-recording', (req, res) => {
+    const uniqueId = generateUniqueId();
 
-//handle video uploads
-app.post('/api/upload', upload.single('video'), async (req, res) => {
+    //store unique id for recording the session
+    recordings[uniqueId] = { chunks: [] }
+
+    res.status(200).json({ uniqueId });
+});
+
+//upload chunk endpoint
+app.post('/upload-chunk/:uniqueId',upload.single('videoChunk'), (req, res) => {
+    const { uniqueId } = req.params;
+    const videoChunkData = req.file.buffer;
+
+    if (!recordings[uniqueId]) {
+        return res.status(404).json({ message: 'Recording not found' })
+    }
+
+    //store the uploaded chunk
+    recordings[uniqueId].chunks.push(videoChunkData);
+
+    res.status(200).json({ message: 'Chunks uploaded successfully' })
+});
+
+//complete recording endpoint
+app.post('/complete-recording/:uniqueId', async (req, res) => {
+    const { uniqueId } = req.params;
+
+    if (!recordings[uniqueId]) {
+        return res.status(404).json({ message: 'Recording not found' })
+    }
+
+    const { title } = req.body;
+
     try {
-        //create a new video doc in mongoDB
-        const { title } = req.body;
-        const videoFileBuffer = req.file.buffer;
+        //concat all chunks to crate a complete video data
+        const completeVideoData = Buffer.concat(recordings[uniqueId].chunks);
 
-        //upload video to cloudinary
-        const uploadResponse = await cloudinary.uploader.upload_stream(
-            { resource_type: 'video' },
-            async (error, result) => {
-                if (error) {
-                    console.error(error);
-                    res.status(500).json({ message: 'Error uploading video' });
-                } else {
-                    //save vido metadata to the mongoDB
-                    const { public_id, secure_url } = result;
+        //create new video doc in MongoDB
+        const video = new Video ({
+            title,
+            videoData: completeVideoData,
+        });
+    
+        await video.save();
 
-                    //create new video doc in mongoDB
-                    const video = new Video({
-                        title,
-                        filename: public_id //store public_id
-                    });
-                    await video.save(); //save metadata in mongoDB
+        //remove the recording from the data store
+        delete recordings[uniqueId];
 
-                    res.status(201).json({ message: 'Video uploaded succesfully' } )
-                }
-            }
-        );
-
-        videoFileBuffer.pipe(uploadResponse)
+        res.status(200).json({ message: 'Recordings completed and saved successfully'})
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: 'server error' })
+        res.status(500).json({ message: 'Server Error' })
     }
 });
+
+//handle video uploads
 
 app.listen(port, () => {
     console.log(`server is running on port ${port}`);
