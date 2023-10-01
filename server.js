@@ -4,6 +4,7 @@ const express = require ('express');
 const mongoose = require ('mongoose');
 const multer = require('multer');
 const cors = require ('cors');
+const path = require ('path');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -29,15 +30,22 @@ db.on('error', (error) => {
 //the video schema
 const videoSchema = new mongoose.Schema({
     title: String,
-    videoData: Buffer,
+    filePath: String,
 });
 
 //setup multer for video uploads
-const storage = multer.memoryStorage();
-const upload = multer({
+const storage = multer.diskStorage({
+    destination: path.join(__dirname, 'uploads'),
+    filename: (req, file, cb) => {
+        const uniqueId = generateUniqueId();
+        cb(null, `${uniqueId}-${file.originalname}`); //remove the file to include a unique id
+    },
+});
+
+const upload = multer ({
     storage: storage,
     limits: {
-        fileSize: 100 * 1024 * 1024, //limiting the filesize to 10mb
+        fileSize: 100 * 1024 * 1024
     }
 })
 
@@ -51,61 +59,68 @@ const recordings = {};
 
 const Video = mongoose.model('Video', videoSchema);
 
+let currentUniqueId;
+
 //start recording endpoint
 app.post('/start-recording', (req, res) => {
-    const uniqueId = generateUniqueId();
+    currentUniqueId = generateUniqueId();
 
     //store unique id for recording the session
-    recordings[uniqueId] = { chunks: [] }
+    recordings[currentUniqueId] = { chunks: [] }
 
-    res.status(200).json({ uniqueId });
+    res.status(200).json({ uniqueId: currentUniqueId });
 });
 
 //upload chunk endpoint
-app.post('/upload-chunk/:uniqueId',upload.single('videoChunk'), (req, res) => {
-    const { uniqueId } = req.params;
-    const videoChunkData = req.file.buffer;
-
-    if (!recordings[uniqueId]) {
+app.post('/upload-chunk',upload.single('videoChunk'), (req, res) => {
+    if (!currentUniqueId || !recordings[currentUniqueId]) {
         return res.status(404).json({ message: 'Recording not found' })
     }
 
-    //store the uploaded chunk
-    recordings[uniqueId].chunks.push(videoChunkData);
+    const videoChunkData = req.file.buffer
+
+    //store the uploaded chunk using current unique id 
+    recordings[currentUniqueId].chunks.push(videoChunkData);
 
     res.status(200).json({ message: 'Chunks uploaded successfully' })
 });
 
 //complete recording endpoint
-app.post('/complete-recording/:uniqueId', async (req, res) => {
-    const { uniqueId } = req.params;
-
-    if (!recordings[uniqueId]) {
+app.post('/complete-recording', async (req, res) => {
+    if (!currentUniqueId || !recordings[currentUniqueId]) {
         return res.status(404).json({ message: 'Recording not found' })
     }
 
     const { title } = req.body;
 
     try {
-        //concat all chunks to crate a complete video data
-        const completeVideoData = Buffer.concat(recordings[uniqueId].chunks);
-
-        //create new video doc in MongoDB
-        const video = new Video ({
+        // Concatenate all chunks to create complete video data
+        const completeVideoData = Buffer.concat(recordings[currentUniqueId].chunks);
+    
+        // Define the file path where the video will be saved on the server
+        const filePath = path.join(__dirname, 'uploads', `${currentUniqueId}.mp4`); // Use currentUniqueId as the filename
+    
+        // Write the complete video data to the file on the server
+        fs.writeFileSync(filePath, completeVideoData);
+    
+        // Create a new video doc in MongoDB with title and the path to the saved video file
+        const video = new Video({
             title,
-            videoData: completeVideoData,
+            filePath: `${currentUniqueId}.mp4`, // Associate the file path with the model
         });
     
         await video.save();
-
-        //remove the recording from the data store
+    
+        // Remove the recording from the data store
         delete recordings[uniqueId];
-
-        res.status(200).json({ message: 'Recordings completed and saved successfully'})
+    
+        res.status(200).json({ message: 'Recording metadata saved successfully' });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: 'Server Error' })
+        res.status(500).json({ message: 'Server Error' });
     }
+    
+    
 });
 
 //handle video uploads
